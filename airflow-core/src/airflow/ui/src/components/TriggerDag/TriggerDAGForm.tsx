@@ -34,8 +34,6 @@ import { DateTimeInput } from "../DateTimeInput";
 import { ErrorAlert } from "../ErrorAlert";
 import { Checkbox } from "../ui/Checkbox";
 import EditableMarkdown from "./EditableMarkdown";
-import { RecentConfigurationsDropdown } from "./RecentConfigurationsDropdown";
-import type { RecentConfiguration } from "src/queries/useRecentConfigurations";
 
 type TriggerDAGFormProps = {
   readonly dagDisplayName: string;
@@ -43,6 +41,13 @@ type TriggerDAGFormProps = {
   readonly isPaused: boolean;
   readonly onClose: () => void;
   readonly open: boolean;
+  readonly prefillConfig?:
+    | {
+        conf: Record<string, unknown> | undefined;
+        logicalDate: string | undefined;
+        runId: string;
+      }
+    | undefined;
 };
 
 export type DagRunTriggerParams = {
@@ -53,16 +58,22 @@ export type DagRunTriggerParams = {
   partitionKey: string | undefined;
 };
 
-const TriggerDAGForm = ({ dagDisplayName, dagId, isPaused, onClose, open }: TriggerDAGFormProps) => {
+const TriggerDAGForm = ({
+  dagDisplayName,
+  dagId,
+  isPaused,
+  onClose,
+  open,
+  prefillConfig,
+}: TriggerDAGFormProps) => {
   const { t: translate } = useTranslation(["common", "components"]);
   const { t: rootTranslate } = useTranslation();
   const [errors, setErrors] = useState<{ conf?: string; date?: unknown }>({});
   const [formError, setFormError] = useState(false);
   const initialParamsDict = useDagParams(dagId, open);
   const { error: errorTrigger, isPending, triggerDagRun } = useTrigger({ dagId, onSuccessConfirm: onClose });
-  const { conf } = useParamStore();
+  const { conf, setConf } = useParamStore();
   const [unpause, setUnpause] = useState(true);
-  const [selectedConfig, setSelectedConfig] = useState<RecentConfiguration | null>(null);
 
   const { mutate: togglePause } = useTogglePause({ dagId });
 
@@ -77,31 +88,40 @@ const TriggerDAGForm = ({ dagDisplayName, dagId, isPaused, onClose, open }: Trig
     },
   });
 
-  // Automatically reset form when conf is fetched
+  // Pre-fill form when prefillConfig is provided (priority over conf)
   useEffect(() => {
-    if (conf) {
+    if (prefillConfig && open) {
+      const confString = prefillConfig.conf ? JSON.stringify(prefillConfig.conf, undefined, 2) : "";
+
+      reset({
+        conf: confString,
+        dagRunId: prefillConfig.runId,
+        logicalDate:
+          prefillConfig.logicalDate === undefined
+            ? dayjs().format(DEFAULT_DATETIME_FORMAT)
+            : dayjs(prefillConfig.logicalDate).format(DEFAULT_DATETIME_FORMAT),
+        note: "",
+        partitionKey: undefined,
+      });
+      // Also update the param store to keep it in sync
+      if (confString) {
+        setConf(confString);
+      }
+    }
+  }, [prefillConfig, open, reset, setConf]);
+
+  // Automatically reset form when conf is fetched (only if no prefillConfig)
+  useEffect(() => {
+    if (conf && !prefillConfig && open) {
       reset((prevValues) => ({
         ...prevValues,
         conf,
       }));
     }
-  }, [conf, reset]);
+  }, [conf, prefillConfig, open, reset]);
 
   const resetDateError = () => {
     setErrors((prev) => ({ ...prev, date: undefined }));
-  };
-
-  const handleConfigSelect = (config: RecentConfiguration | null) => {
-    setSelectedConfig(config);
-    if (config?.conf) {
-      // Update the form with the selected configuration
-      reset((prevValues) => ({
-        ...prevValues,
-        conf: JSON.stringify(config.conf, null, 2),
-        dagRunId: config.run_id,
-        logicalDate: config.logical_date ? dayjs(config.logical_date).format(DEFAULT_DATETIME_FORMAT) : prevValues.logicalDate,
-      }));
-    }
   };
 
   const onSubmit = (data: DagRunTriggerParams) => {
@@ -118,11 +138,6 @@ const TriggerDAGForm = ({ dagDisplayName, dagId, isPaused, onClose, open }: Trig
 
   return (
     <Box mt={8}>
-      <RecentConfigurationsDropdown
-        dagId={dagId}
-        onConfigSelect={handleConfigSelect}
-        selectedConfig={selectedConfig}
-      />
       <ConfigForm
         control={control}
         errors={errors}
